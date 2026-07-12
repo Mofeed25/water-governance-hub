@@ -439,8 +439,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      calc_consumption: { Args: { _subscriber_id: string }; Returns: number }
       can_access_tenant: { Args: { _tenant_id: string }; Returns: boolean }
       current_tenant_id: { Args: never; Returns: string }
+      generate_invoice: {
+        Args: { _period: string; _subscriber_id: string }
+        Returns: string
+      }
+      generate_invoices_for_tenant: {
+        Args: { _period: string; _tenant_id: string }
+        Returns: number
+      }
+      governance_score: { Args: { _tenant_id: string }; Returns: Json }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
