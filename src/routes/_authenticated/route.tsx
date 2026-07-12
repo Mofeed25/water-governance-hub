@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, redirect, Link, useNavigate } from "@tanstack/react-router";
-import { Droplets, LogOut, LayoutDashboard, Gauge, Wallet } from "lucide-react";
+import { Droplets, LogOut, LayoutDashboard, Gauge, Wallet, Shield, MessageCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { MizanFooter } from "@/components/MizanFooter";
 import { useAuthSession, useMizanRoles } from "@/hooks/use-auth";
@@ -18,6 +18,9 @@ function AuthedLayout() {
   const navigate = useNavigate();
   const { user } = useAuthSession();
   const { profile, roles } = useMizanRoles(user?.id);
+
+  const isManager = roles.includes("project_manager") || roles.includes("central_admin") || roles.includes("super_admin");
+  const isSuper = roles.includes("super_admin");
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -39,10 +42,12 @@ function AuthedLayout() {
               </div>
             </div>
           </Link>
-          <nav className="flex items-center gap-1 text-sm">
+          <nav className="flex flex-wrap items-center gap-1 text-sm">
             <NavLink to="/dashboard" icon={LayoutDashboard} label="اللوحة" />
             <NavLink to="/reader" icon={Gauge} label="القراءات" />
             <NavLink to="/collector" icon={Wallet} label="التحصيل" />
+            {isManager && <NavLink to="/chat" icon={MessageCircle} label="المساعد" />}
+            {isSuper && <NavLink to="/admin" icon={Shield} label="الإدارة" />}
           </nav>
           <div className="flex items-center gap-2">
             <div className="hidden text-xs text-muted-foreground sm:block">

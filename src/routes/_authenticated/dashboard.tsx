@@ -1,8 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Activity, Droplets, Users, Wallet, Gauge, ArrowLeft } from "lucide-react";
+import { Activity, Droplets, Users, Wallet, Gauge, ArrowLeft, MessageCircle, Shield } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthSession, useMizanRoles, type MizanRole } from "@/hooks/use-auth";
+import { GovernanceGauge } from "@/components/GovernanceGauge";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "لوحة التحكم — ميزان" }] }),
@@ -24,18 +25,42 @@ function Dashboard() {
   const { profile, roles, loading: rolesLoading } = useMizanRoles(user?.id);
   const [stats, setStats] = useState<Stats>({ subscribers: 0, readings: 0, receipts: 0, billing: 0 });
   const [tenantName, setTenantName] = useState<string | null>(null);
+  const [tenants, setTenants] = useState<{ id: string; name: string }[]>([]);
+  const [selectedTenant, setSelectedTenant] = useState<string | null>(null);
+
+  const isSuper = roles.includes("super_admin");
+  const isManager = isSuper || roles.includes("project_manager") || roles.includes("central_admin");
+  const canRead = isManager || roles.includes("meter_reader");
+  const canCollect = isManager || roles.includes("financial_collector");
+
+  const scopedTenantId = isSuper ? selectedTenant : profile?.tenant_id ?? null;
 
   const refresh = async () => {
+    const q = (t: string) => {
+      let b = supabase.from(t).select("id", { count: "exact", head: true });
+      if (scopedTenantId) b = b.eq("tenant_id", scopedTenantId);
+      return b;
+    };
     const [s, r, rc, b, tn] = await Promise.all([
-      supabase.from("subscribers").select("id", { count: "exact", head: true }),
-      supabase.from("meter_readings").select("id", { count: "exact", head: true }),
-      supabase.from("receipts").select("id", { count: "exact", head: true }),
-      supabase.from("billing_logs").select("id", { count: "exact", head: true }),
-      profile?.tenant_id ? supabase.from("tenants").select("name").eq("id", profile.tenant_id).maybeSingle() : Promise.resolve({ data: null } as any),
+      q("subscribers"),
+      q("meter_readings"),
+      q("receipts"),
+      q("billing_logs"),
+      scopedTenantId ? supabase.from("tenants").select("name").eq("id", scopedTenantId).maybeSingle() : Promise.resolve({ data: null } as { data: null }),
     ]);
     setStats({ subscribers: s.count ?? 0, readings: r.count ?? 0, receipts: rc.count ?? 0, billing: b.count ?? 0 });
-    if ((tn as any)?.data?.name) setTenantName((tn as any).data.name);
+    setTenantName((tn as { data: { name: string } | null }).data?.name ?? null);
   };
+
+  useEffect(() => {
+    if (isSuper) {
+      supabase.from("tenants").select("id,name").order("name").then(({ data }) => {
+        setTenants(data ?? []);
+        if (!selectedTenant && data?.[0]) setSelectedTenant(data[0].id);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuper]);
 
   useEffect(() => {
     refresh();
@@ -48,11 +73,7 @@ function Dashboard() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.tenant_id]);
-
-  const isManager = roles.includes("project_manager") || roles.includes("central_admin") || roles.includes("super_admin");
-  const canRead = isManager || roles.includes("meter_reader");
-  const canCollect = isManager || roles.includes("financial_collector");
+  }, [scopedTenantId]);
 
   return (
     <div className="space-y-6">
@@ -62,10 +83,19 @@ function Dashboard() {
             <div className="text-xs font-semibold text-brand-600">أهلاً بك</div>
             <h1 className="mt-1 text-2xl font-extrabold">{profile?.full_name || user?.email}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {tenantName ? `المشروع: ${tenantName}` : "لم يتم ربط مشروع بعد"}
+              {tenantName ? `المشروع: ${tenantName}` : isSuper ? "اختر مشروعًا للاطلاع" : "لم يتم ربط مشروع بعد"}
             </p>
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            {isSuper && tenants.length > 0 && (
+              <select
+                value={selectedTenant ?? ""}
+                onChange={(e) => setSelectedTenant(e.target.value || null)}
+                className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold"
+              >
+                {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            )}
             {rolesLoading ? (
               <span className="text-xs text-muted-foreground">جارِ تحميل الصلاحيات…</span>
             ) : roles.length ? (
@@ -83,19 +113,24 @@ function Dashboard() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={Users} label="المشتركون" value={stats.subscribers} />
-        <StatCard icon={Droplets} label="القراءات" value={stats.readings} tone="brand" />
-        <StatCard icon={Wallet} label="الإيصالات" value={stats.receipts} tone="aqua" />
-        <StatCard icon={Activity} label="سجلات الفوترة" value={stats.billing} />
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2 grid gap-4 sm:grid-cols-2">
+          <StatCard icon={Users} label="المشتركون" value={stats.subscribers} />
+          <StatCard icon={Droplets} label="القراءات" value={stats.readings} tone="brand" />
+          <StatCard icon={Wallet} label="الإيصالات" value={stats.receipts} tone="aqua" />
+          <StatCard icon={Activity} label="سجلات الفوترة" value={stats.billing} />
+        </div>
+        <GovernanceGauge tenantId={scopedTenantId} />
       </div>
 
       {isManager && (
         <div>
-          <h2 className="mb-3 text-sm font-bold text-muted-foreground">وصول سريع للواجهات الفرعية (وضع الإدارة)</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <QuickCard to="/reader" icon={Gauge} title="قارئ العدادات" body="تسجيل قراءات المشتركين مع GPS" />
-            <QuickCard to="/collector" icon={Wallet} title="التحصيل المالي" body="إصدار إيصالات مع التفقيط العربي" />
+          <h2 className="mb-3 text-sm font-bold text-muted-foreground">وصول سريع</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <QuickCard to="/reader" icon={Gauge} title="قارئ العدادات" body="تسجيل قراءات المشتركين" />
+            <QuickCard to="/collector" icon={Wallet} title="التحصيل المالي" body="إصدار إيصالات مالية" />
+            <QuickCard to="/chat" icon={MessageCircle} title="المساعد الذكي" body="اسأل عن بيانات مشروعك" />
+            {isSuper && <QuickCard to="/admin" icon={Shield} title="الإدارة المركزية" body="المشاريع والاشتراكات" />}
           </div>
         </div>
       )}
@@ -106,10 +141,6 @@ function Dashboard() {
           {canCollect && <QuickCard to="/collector" icon={Wallet} title="التحصيل المالي" body="ابدأ إصدار الإيصالات" />}
         </div>
       )}
-
-      <div className="glass rounded-2xl p-5 text-xs text-muted-foreground">
-        تلميح: افتح نافذتين على أجهزة مختلفة (تعز والمسراخ مثلاً) وسجّل بيانات من أحدهما — ستُحدَّث الأرقام هنا فوريًا عبر WebSocket.
-      </div>
     </div>
   );
 }
