@@ -147,6 +147,7 @@ export type Database = {
           consumption_m3: number | null
           gps_lat: number | null
           gps_lng: number | null
+          hash_signature: string | null
           id: string
           period: string | null
           photo_url: string | null
@@ -161,6 +162,7 @@ export type Database = {
           consumption_m3?: number | null
           gps_lat?: number | null
           gps_lng?: number | null
+          hash_signature?: string | null
           id?: string
           period?: string | null
           photo_url?: string | null
@@ -175,6 +177,7 @@ export type Database = {
           consumption_m3?: number | null
           gps_lat?: number | null
           gps_lng?: number | null
+          hash_signature?: string | null
           id?: string
           period?: string | null
           photo_url?: string | null
@@ -239,6 +242,7 @@ export type Database = {
           amount_yer: number
           collector_id: string | null
           created_at: string
+          hash_signature: string | null
           id: string
           period: string | null
           subscriber_id: string
@@ -249,6 +253,7 @@ export type Database = {
           amount_yer: number
           collector_id?: string | null
           created_at?: string
+          hash_signature?: string | null
           id?: string
           period?: string | null
           subscriber_id: string
@@ -259,6 +264,7 @@ export type Database = {
           amount_yer?: number
           collector_id?: string | null
           created_at?: string
+          hash_signature?: string | null
           id?: string
           period?: string | null
           subscriber_id?: string
