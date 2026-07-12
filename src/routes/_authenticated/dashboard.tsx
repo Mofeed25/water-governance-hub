@@ -36,20 +36,20 @@ function Dashboard() {
   const scopedTenantId = isSuper ? selectedTenant : profile?.tenant_id ?? null;
 
   const refresh = async () => {
-    const q = (t: string) => {
-      let b = supabase.from(t).select("id", { count: "exact", head: true });
-      if (scopedTenantId) b = b.eq("tenant_id", scopedTenantId);
-      return b;
-    };
+    const tid = scopedTenantId;
+    const subQ = supabase.from("subscribers").select("id", { count: "exact", head: true });
+    const readQ = supabase.from("meter_readings").select("id", { count: "exact", head: true });
+    const recQ = supabase.from("receipts").select("id", { count: "exact", head: true });
+    const billQ = supabase.from("billing_logs").select("id", { count: "exact", head: true });
     const [s, r, rc, b, tn] = await Promise.all([
-      q("subscribers"),
-      q("meter_readings"),
-      q("receipts"),
-      q("billing_logs"),
-      scopedTenantId ? supabase.from("tenants").select("name").eq("id", scopedTenantId).maybeSingle() : Promise.resolve({ data: null } as { data: null }),
+      tid ? subQ.eq("tenant_id", tid) : subQ,
+      tid ? readQ.eq("tenant_id", tid) : readQ,
+      tid ? recQ.eq("tenant_id", tid) : recQ,
+      tid ? billQ.eq("tenant_id", tid) : billQ,
+      tid ? supabase.from("tenants").select("name").eq("id", tid).maybeSingle() : Promise.resolve({ data: null as { name: string } | null }),
     ]);
     setStats({ subscribers: s.count ?? 0, readings: r.count ?? 0, receipts: rc.count ?? 0, billing: b.count ?? 0 });
-    setTenantName((tn as { data: { name: string } | null }).data?.name ?? null);
+    setTenantName(tn.data?.name ?? null);
   };
 
   useEffect(() => {
