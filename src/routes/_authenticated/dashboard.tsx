@@ -78,6 +78,9 @@ function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {!rolesLoading && roles.length === 0 && (
+        <SetupSuperAdmin onDone={() => window.location.reload()} />
+      )}
       <div className="glass rounded-2xl p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
