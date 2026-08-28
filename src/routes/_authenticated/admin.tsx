@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Shield, Plus, Pause, Play, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { AdminUsers } from "@/components/AdminUsers";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: "الإدارة المركزية — ميزان" }] }),
@@ -177,8 +178,10 @@ function AdminPage() {
         </table>
       </div>
 
+      <AdminUsers tenants={tenants.map((t) => ({ id: t.id, name: t.name }))} />
+
       <p className="text-xs text-muted-foreground">
-        عند تعليق مشروع، تتوقف سياسات RLS عن السماح لمستخدميه بالوصول إلى بياناته فورًا.
+        عند تعليق مشروع، يفقد مستخدموه الوصول إلى بياناته فورًا.
       </p>
     </div>
   );

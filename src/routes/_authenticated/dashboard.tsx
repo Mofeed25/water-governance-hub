@@ -4,6 +4,7 @@ import { Activity, Droplets, Users, Wallet, Gauge, ArrowLeft, MessageCircle, Shi
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthSession, useMizanRoles, type MizanRole } from "@/hooks/use-auth";
 import { GovernanceGauge } from "@/components/GovernanceGauge";
+import { SetupSuperAdmin } from "@/components/SetupSuperAdmin";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "لوحة التحكم — ميزان" }] }),
@@ -77,6 +78,9 @@ function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {!rolesLoading && roles.length === 0 && (
+        <SetupSuperAdmin onDone={() => window.location.reload()} />
+      )}
       <div className="glass rounded-2xl p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
