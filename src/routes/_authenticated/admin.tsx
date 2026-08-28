@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Shield, Plus, Pause, Play, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { AdminUsers } from "@/components/AdminUsers";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: "الإدارة المركزية — ميزان" }] }),
