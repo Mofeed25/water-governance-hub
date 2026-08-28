@@ -4,6 +4,7 @@ import { Activity, Droplets, Users, Wallet, Gauge, ArrowLeft, MessageCircle, Shi
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthSession, useMizanRoles, type MizanRole } from "@/hooks/use-auth";
 import { GovernanceGauge } from "@/components/GovernanceGauge";
+import { SetupSuperAdmin } from "@/components/SetupSuperAdmin";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "لوحة التحكم — ميزان" }] }),
