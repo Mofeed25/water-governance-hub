@@ -178,8 +178,10 @@ function AdminPage() {
         </table>
       </div>
 
+      <AdminUsers tenants={tenants.map((t) => ({ id: t.id, name: t.name }))} />
+
       <p className="text-xs text-muted-foreground">
-        عند تعليق مشروع، تتوقف سياسات RLS عن السماح لمستخدميه بالوصول إلى بياناته فورًا.
+        عند تعليق مشروع، يفقد مستخدموه الوصول إلى بياناته فورًا.
       </p>
     </div>
   );
