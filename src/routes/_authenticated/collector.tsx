@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Wallet, Lock, Loader2 } from "lucide-react";
+import { Wallet, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthSession, useMizanRoles } from "@/hooks/use-auth";
 import { tafqitYER } from "@/lib/tafqit";
@@ -30,25 +30,28 @@ function CollectorPage() {
   const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
   const [busy, setBusy] = useState(false);
 
-  const words = useMemo(() => (amount ? tafqitYER(parseFloat(amount) || 0) : ""), [amount]);
+  const words = useMemo(() => (amount ? tafqitYER(Number(amount) || 0) : ""), [amount]);
 
   const loadSubs = async () => {
-    const { data } = await supabase.from("subscribers").select("id,name,zone,meter_serial,balance_yer,tenant_id").order("meter_serial");
+    const { data, error } = await supabase.from("subscribers").select("id,name,zone,meter_serial,balance_yer,tenant_id").order("meter_serial");
+    if (error) { toast.error("تعذر تحميل المشتركين"); return; }
     setSubs(data ?? []);
   };
   const loadRows = async () => {
-    const { data } = await supabase.from("receipts")
+    const { data, error } = await supabase.from("receipts")
       .select("id,amount_yer,amount_words_ar,period,created_at,subscribers(name,meter_serial)")
       .order("created_at", { ascending: false }).limit(20);
+    if (error) { toast.error("تعذر تحميل سجل الإيصالات"); return; }
     setRows((data ?? []) as ReceiptRow[]);
   };
 
   useEffect(() => {
-    loadSubs(); loadRows();
+    void loadSubs();
+    void loadRows();
     const ch = supabase.channel("collector-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "receipts" }, loadRows)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "receipts" }, () => void loadRows())
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => { void supabase.removeChannel(ch); };
   }, []);
 
   const submit = async (e: React.FormEvent) => {
@@ -56,15 +59,14 @@ function CollectorPage() {
     if (!subId || !amount) { toast.error("يرجى تعبئة الحقول"); return; }
     const tenantId = subs.find((s) => s.id === subId)?.tenant_id ?? profile?.tenant_id ?? null;
     if (!user || !tenantId) { toast.error("الحساب غير مرتبط بمشروع"); return; }
-    const amt = parseFloat(amount);
-    if (amt <= 0) { toast.error("المبلغ غير صالح"); return; }
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) { toast.error("المبلغ غير صالح"); return; }
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) { toast.error("الفترة غير صالحة"); return; }
+
     setBusy(true);
     try {
-      const created_at = new Date().toISOString();
-      const canon = `${tenantId}|${subId}|${user.id}|${amt}|${created_at}`;
-      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canon));
-      const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-
+      // The database generates the integrity digest and applies the receipt to
+      // the oldest unpaid invoices atomically. Client code cannot forge it.
       const { error } = await supabase.from("receipts").insert({
         tenant_id: tenantId,
         subscriber_id: subId,
@@ -72,13 +74,15 @@ function CollectorPage() {
         amount_yer: amt,
         amount_words_ar: tafqitYER(amt),
         period,
-        hash_signature: hash,
+        created_at: new Date().toISOString(),
       });
       if (error) throw error;
-      toast.success("تم إصدار الإيصال — مغلق تشفيريًا");
-      setAmount(""); setSubId(""); loadSubs();
+      toast.success("تم إصدار الإيصال وتطبيق الدفعة");
+      setAmount(""); setSubId("");
+      void loadSubs();
+      void loadRows();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "فشل الإرسال");
+      toast.error(err instanceof Error ? err.message : "فشل إصدار الإيصال");
     } finally { setBusy(false); }
   };
 
@@ -88,7 +92,7 @@ function CollectorPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-extrabold">التحصيل المالي</h1>
-        <p className="mt-1 text-sm text-muted-foreground">إصدار إيصالات فورية مع تفقيط عربي — مغلقة بعد الإرسال.</p>
+        <p className="mt-1 text-sm text-muted-foreground">إصدار إيصالات فورية مع تفقيط عربي وتطبيق آلي على أقدم المستحقات.</p>
       </div>
 
       {!rolesLoading && !canSubmit && (
@@ -137,15 +141,15 @@ function CollectorPage() {
 
           <button type="submit" disabled={!canSubmit || busy}
             className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl brand-gradient px-4 py-3 text-sm font-bold text-white shadow-md hover:opacity-95 disabled:opacity-60">
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-            إصدار الإيصال وقفله
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
+            إصدار الإيصال
           </button>
         </form>
 
         <div className="glass rounded-2xl p-5 lg:col-span-3">
           <div className="mb-3 flex items-center justify-between">
             <div className="text-sm font-bold">أحدث الإيصالات (مباشر)</div>
-            <span className="text-[10px] text-emerald-700">● WebSocket</span>
+            <span className="text-[10px] text-emerald-700">● Realtime</span>
           </div>
           <div className="max-h-[420px] overflow-auto">
             <table className="w-full text-xs">

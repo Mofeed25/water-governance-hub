@@ -1,10 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { Activity, Droplets, Users, Wallet, Gauge, ArrowLeft, MessageCircle, Shield } from "lucide-react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthSession, useMizanRoles, type MizanRole } from "@/hooks/use-auth";
 import { GovernanceGauge } from "@/components/GovernanceGauge";
-import { SetupSuperAdmin } from "@/components/SetupSuperAdmin";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "لوحة التحكم — ميزان" }] }),
@@ -33,7 +32,6 @@ function Dashboard() {
   const isManager = isSuper || roles.includes("project_manager") || roles.includes("central_admin");
   const canRead = isManager || roles.includes("meter_reader");
   const canCollect = isManager || roles.includes("financial_collector");
-
   const scopedTenantId = isSuper ? selectedTenant : profile?.tenant_id ?? null;
 
   const refresh = async () => {
@@ -54,33 +52,34 @@ function Dashboard() {
   };
 
   useEffect(() => {
-    if (isSuper) {
-      supabase.from("tenants").select("id,name").order("name").then(({ data }) => {
-        setTenants(data ?? []);
-        if (!selectedTenant && data?.[0]) setSelectedTenant(data[0].id);
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuper]);
+    if (!isSuper) return;
+    supabase.from("tenants").select("id,name").order("name").then(({ data }) => {
+      setTenants(data ?? []);
+      if (!selectedTenant && data?.[0]) setSelectedTenant(data[0].id);
+    });
+  }, [isSuper, selectedTenant]);
 
   useEffect(() => {
-    refresh();
+    void refresh();
     const channel = supabase
       .channel("dashboard-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "meter_readings" }, refresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "receipts" }, refresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "subscribers" }, refresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "billing_logs" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "meter_readings" }, () => void refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "receipts" }, () => void refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "subscribers" }, () => void refresh())
+      .on("postgres_changes", { event: "*", schema: "public", table: "billing_logs" }, () => void refresh())
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => { void supabase.removeChannel(channel); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopedTenantId]);
 
   return (
     <div className="space-y-6">
       {!rolesLoading && roles.length === 0 && (
-        <SetupSuperAdmin onDone={() => window.location.reload()} />
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          حسابك مسجل لكن لم يتم إسناد مشروع أو دور بعد. يجب على المشرف الأعلى إكمال الإسناد من لوحة الإدارة.
+        </div>
       )}
+
       <div className="glass rounded-2xl p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -92,26 +91,16 @@ function Dashboard() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {isSuper && tenants.length > 0 && (
-              <select
-                value={selectedTenant ?? ""}
-                onChange={(e) => setSelectedTenant(e.target.value || null)}
-                className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold"
-              >
+              <select value={selectedTenant ?? ""} onChange={(e) => setSelectedTenant(e.target.value || null)} className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold">
                 {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             )}
             {rolesLoading ? (
               <span className="text-xs text-muted-foreground">جارِ تحميل الصلاحيات…</span>
             ) : roles.length ? (
-              roles.map((r) => (
-                <span key={r} className="rounded-full border border-brand-200 bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-700">
-                  {ROLE_LABEL[r]}
-                </span>
-              ))
+              roles.map((r) => <span key={r} className="rounded-full border border-brand-200 bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-700">{ROLE_LABEL[r]}</span>)
             ) : (
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">
-                لا توجد صلاحيات — تواصل مع الإدارة المركزية
-              </span>
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">لا توجد صلاحيات</span>
             )}
           </div>
         </div>
@@ -150,32 +139,9 @@ function Dashboard() {
 }
 
 function StatCard({ icon: Icon, label, value, tone }: { icon: typeof Droplets; label: string; value: number; tone?: "brand" | "aqua" }) {
-  return (
-    <div className="glass rounded-2xl p-5">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-muted-foreground">{label}</span>
-        <div className={`grid h-9 w-9 place-items-center rounded-xl text-white ${tone === "aqua" ? "bg-aqua-600" : tone === "brand" ? "bg-brand-600" : "brand-gradient"}`}>
-          <Icon className="h-4 w-4" />
-        </div>
-      </div>
-      <div className="num mt-3 text-3xl font-extrabold">{value.toLocaleString("en-US")}</div>
-    </div>
-  );
+  return <div className="glass rounded-2xl p-5"><div className="flex items-center justify-between"><span className="text-xs font-semibold text-muted-foreground">{label}</span><div className={`grid h-9 w-9 place-items-center rounded-xl text-white ${tone === "aqua" ? "bg-aqua-600" : tone === "brand" ? "bg-brand-600" : "brand-gradient"}`}><Icon className="h-4 w-4" /></div></div><div className="num mt-3 text-3xl font-extrabold">{value.toLocaleString("en-US")}</div></div>;
 }
 
 function QuickCard({ to, icon: Icon, title, body }: { to: string; icon: typeof Droplets; title: string; body: string }) {
-  return (
-    <Link to={to} className="glass group flex items-center justify-between rounded-2xl p-5 transition hover:shadow-lg">
-      <div className="flex items-center gap-3">
-        <div className="grid h-11 w-11 place-items-center rounded-xl brand-gradient text-white">
-          <Icon className="h-5 w-5" />
-        </div>
-        <div>
-          <div className="font-bold">{title}</div>
-          <div className="text-xs text-muted-foreground">{body}</div>
-        </div>
-      </div>
-      <ArrowLeft className="h-4 w-4 text-muted-foreground transition group-hover:-translate-x-1 group-hover:text-brand-600" />
-    </Link>
-  );
+  return <Link to={to} className="glass group flex items-center justify-between rounded-2xl p-5 transition hover:shadow-lg"><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl brand-gradient text-white"><Icon className="h-5 w-5" /></div><div><div className="font-bold">{title}</div><div className="text-xs text-muted-foreground">{body}</div></div></div><ArrowLeft className="h-4 w-4 text-muted-foreground transition group-hover:-translate-x-1 group-hover:text-brand-600" /></Link>;
 }
