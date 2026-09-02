@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(9);
+select plan(14);
 select has_column('public','meter_readings','client_operation_id','meter readings have offline idempotency key');
 select has_column('public','receipts','client_operation_id','receipts have offline idempotency key');
 select has_column('public','tenants','subscription_expires_at','tenants have subscription expiry');
@@ -10,5 +10,10 @@ select has_index('public','user_roles_one_tenant_role_uidx','one operational acc
 select ok(to_regclass('public.tenant_sustainability_metrics') is not null,'sustainability metrics view exists');
 select ok(has_function_privilege('anon','public.admin_manage_tenant(uuid,text,public.subscription_tier)','execute') = false,'anonymous callers cannot manage tenants');
 select ok(has_function_privilege('authenticated','public.admin_manage_tenant(uuid,text,public.subscription_tier)','execute'),'authenticated callers reach lifecycle RPC, which self-authorizes super_admin');
+select has_column('public','meter_readings','meter_serial_extracted','meter readings store extracted meter identity');
+select has_column('public','meter_readings','meter_identity_match','meter readings store exact identity verification result');
+select has_column('public','meter_readings','reading_ocr_confidence','meter readings store OCR confidence separately');
+select has_column('public','meter_readings','ocr_processing_ms','meter readings store OCR processing time');
+select ok(to_regprocedure('public.validate_meter_reading_evidence()') is not null,'meter evidence validation trigger function exists');
 select * from finish();
 rollback;
