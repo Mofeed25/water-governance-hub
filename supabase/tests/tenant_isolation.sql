@@ -2,7 +2,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 
 -- Structural and privilege-level security gates.
-select plan(15);
+select plan(16);
 
 select ok((select relrowsecurity from pg_class where oid='public.tenants'::regclass), 'tenants has RLS enabled');
 select ok((select relrowsecurity from pg_class where oid='public.subscribers'::regclass), 'subscribers has RLS enabled');
