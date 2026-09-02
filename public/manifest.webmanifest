@@ -1,0 +1,13 @@
+{
+  "name": "منصة ميزان الذكية لإدارة واستدامة المياه",
+  "short_name": "ميزان",
+  "description": "منصة متعددة المستأجرين لإدارة مشاريع المياه واستدامتها المالية والتشغيلية",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f766e",
+  "icons": []
+}
