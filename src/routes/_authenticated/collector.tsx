@@ -12,7 +12,7 @@ export const Route = createFileRoute("/_authenticated/collector")({
   component: CollectorPage,
 });
 
-interface Subscriber { id: string; name: string; zone: string | null; meter_serial: string; balance_yer: number | null; }
+interface Subscriber { id: string; name: string; zone: string | null; meter_serial: string; balance_yer: number | null; tenant_id: string; }
 interface ReceiptRow {
   id: string; amount_yer: number; amount_words_ar: string | null; period: string | null; created_at: string;
   subscribers?: { name: string; meter_serial: string } | null;
@@ -33,7 +33,7 @@ function CollectorPage() {
   const words = useMemo(() => (amount ? tafqitYER(parseFloat(amount) || 0) : ""), [amount]);
 
   const loadSubs = async () => {
-    const { data } = await supabase.from("subscribers").select("id,name,zone,meter_serial,balance_yer").order("meter_serial");
+    const { data } = await supabase.from("subscribers").select("id,name,zone,meter_serial,balance_yer,tenant_id").order("meter_serial");
     setSubs(data ?? []);
   };
   const loadRows = async () => {
@@ -53,19 +53,20 @@ function CollectorPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !profile?.tenant_id) { toast.error("الحساب غير مرتبط بمشروع"); return; }
     if (!subId || !amount) { toast.error("يرجى تعبئة الحقول"); return; }
+    const tenantId = subs.find((s) => s.id === subId)?.tenant_id ?? profile?.tenant_id ?? null;
+    if (!user || !tenantId) { toast.error("الحساب غير مرتبط بمشروع"); return; }
     const amt = parseFloat(amount);
     if (amt <= 0) { toast.error("المبلغ غير صالح"); return; }
     setBusy(true);
     try {
       const created_at = new Date().toISOString();
-      const canon = `${profile.tenant_id}|${subId}|${user.id}|${amt}|${created_at}`;
+      const canon = `${tenantId}|${subId}|${user.id}|${amt}|${created_at}`;
       const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canon));
       const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
 
       const { error } = await supabase.from("receipts").insert({
-        tenant_id: profile.tenant_id,
+        tenant_id: tenantId,
         subscriber_id: subId,
         collector_id: user.id,
         amount_yer: amt,
@@ -75,7 +76,7 @@ function CollectorPage() {
       });
       if (error) throw error;
       toast.success("تم إصدار الإيصال — مغلق تشفيريًا");
-      setAmount(""); setSubId("");
+      setAmount(""); setSubId(""); loadSubs();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "فشل الإرسال");
     } finally { setBusy(false); }

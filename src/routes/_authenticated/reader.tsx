@@ -11,7 +11,7 @@ export const Route = createFileRoute("/_authenticated/reader")({
   component: ReaderPage,
 });
 
-interface Subscriber { id: string; name: string; zone: string | null; meter_serial: string; }
+interface Subscriber { id: string; name: string; zone: string | null; meter_serial: string; tenant_id: string; }
 interface ReadingRow {
   id: string; reading_m3: number; previous_m3: number | null; captured_at: string;
   gps_lat: number | null; gps_lng: number | null; subscriber_id: string;
@@ -33,7 +33,7 @@ function ReaderPage() {
   const [busy, setBusy] = useState(false);
 
   const loadSubs = async () => {
-    const { data } = await supabase.from("subscribers").select("id,name,zone,meter_serial").order("meter_serial");
+    const { data } = await supabase.from("subscribers").select("id,name,zone,meter_serial,tenant_id").order("meter_serial");
     setSubs(data ?? []);
   };
   const loadRows = async () => {
@@ -65,12 +65,13 @@ function ReaderPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !profile?.tenant_id) { toast.error("الحساب غير مرتبط بمشروع"); return; }
     if (!subId || !reading) { toast.error("يرجى تعبئة الحقول"); return; }
+    const tenantId = subs.find((s) => s.id === subId)?.tenant_id ?? profile?.tenant_id ?? null;
+    if (!user || !tenantId) { toast.error("الحساب غير مرتبط بمشروع"); return; }
     setBusy(true);
     try {
       const payload: any = {
-        tenant_id: profile.tenant_id,
+        tenant_id: tenantId,
         subscriber_id: subId,
         reader_id: user.id,
         reading_m3: parseFloat(reading),
