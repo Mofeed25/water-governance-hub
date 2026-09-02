@@ -1,8 +1,8 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(14);
+select plan(15);
 select has_column('public','meter_readings','client_operation_id','meter readings have offline idempotency key');
-select has_column('public','receipts','client_operation_id','receipts have offline idempotency key');
+select has_column('public','receipts','client_operation_id','receipt idempotency key');
 select has_column('public','tenants','subscription_expires_at','tenants have subscription expiry');
 select has_index('public','meter_readings_client_operation_uidx','meter reading idempotency index exists');
 select has_index('public','receipts_client_operation_uidx','receipt idempotency index exists');
