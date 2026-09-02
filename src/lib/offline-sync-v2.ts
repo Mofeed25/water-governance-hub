@@ -23,7 +23,26 @@ export async function getTenantCache<T>(key: string, tenantId: string): Promise<
 export async function queueWrite(table: OfflineTable, tenantId: string, payload: OfflinePayload): Promise<OfflineOperation> { const id = String(payload.client_operation_id ?? crypto.randomUUID()); const item: OfflineOperation = { id, tenantId, table, payload, createdAt: new Date().toISOString(), attempts: 0, status: "pending" }; await put(OUTBOX, item); return item; }
 export async function getPendingCount(tenantId: string) { const items = await all<OfflineOperation>(OUTBOX); return items.filter(x => x.tenantId === tenantId && (x.status === "pending" || x.status === "failed")).length; }
 
-async function uploadPhoto(tenantId: string, operationId: string, payload: OfflinePayload): Promise<string | null> { const blob = payload.photo_blob; if (!(blob instanceof Blob)) return typeof payload.photo_url === "string" ? payload.photo_url : null; const path = `${tenantId}/${operationId}.jpg`; const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: blob.type || "image/jpeg", upsert: false }); if (error && !/already exists/i.test(error.message)) throw error; return path; }
+function photoExtension(type: string | undefined) {
+  switch ((type || "").toLowerCase()) {
+    case "image/png": return "png";
+    case "image/webp": return "webp";
+    case "image/heic": return "heic";
+    case "image/heif": return "heif";
+    default: return "jpg";
+  }
+}
+
+async function uploadPhoto(tenantId: string, operationId: string, payload: OfflinePayload): Promise<string | null> {
+  const blob = payload.photo_blob;
+  if (!(blob instanceof Blob)) return typeof payload.photo_url === "string" ? payload.photo_url : null;
+  const contentType = blob.type || "image/jpeg";
+  const path = `${tenantId}/${operationId}.${photoExtension(contentType)}`;
+  const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType, upsert: false });
+  if (error && !/already exists/i.test(error.message)) throw error;
+  return path;
+}
+
 async function syncOne(item: OfflineOperation) { const payload = { ...item.payload }; const photo = item.table === "meter_readings" ? await uploadPhoto(item.tenantId, item.id, payload) : null; delete payload.photo_blob; if (photo) payload.photo_url = photo; const { error } = await supabase.from(item.table).upsert(payload, { onConflict: "client_operation_id" }); if (error) throw error; }
 
 export async function syncTenant(tenantId: string): Promise<{ synced: number; failed: number }> { if (!navigator.onLine) return { synced: 0, failed: 0 }; const items = (await all<OfflineOperation>(OUTBOX)).filter(x => x.tenantId === tenantId && (x.status === "pending" || x.status === "failed")).sort((a,b) => a.createdAt.localeCompare(b.createdAt)); let synced = 0, failed = 0; for (const item of items) { try { await syncOne(item); await remove(OUTBOX, item.id); synced++; } catch (e) { item.status = "failed"; item.attempts++; item.lastError = e instanceof Error ? e.message : "فشل التزامن"; await put(OUTBOX, item); failed++; } } return { synced, failed }; }
