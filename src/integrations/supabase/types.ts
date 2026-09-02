@@ -492,6 +492,10 @@ export type Database = {
         Returns: boolean
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      recompute_subscriber_balance: {
+        Args: { _subscriber_id: string }
+        Returns: undefined
+      }
       super_admin_exists: { Args: never; Returns: boolean }
       tenant_is_active: { Args: { _tenant_id: string }; Returns: boolean }
     }
