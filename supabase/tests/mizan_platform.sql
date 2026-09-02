@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(15);
+select plan(16);
 select has_column('public','meter_readings','client_operation_id','meter readings have offline idempotency key');
 select has_column('public','receipts','client_operation_id','receipt idempotency key');
 select has_column('public','tenants','subscription_expires_at','tenants have subscription expiry');
@@ -15,5 +15,6 @@ select has_column('public','meter_readings','meter_identity_match','meter readin
 select has_column('public','meter_readings','reading_ocr_confidence','meter readings store OCR confidence separately');
 select has_column('public','meter_readings','ocr_processing_ms','meter readings store OCR processing time');
 select ok(to_regprocedure('public.validate_meter_reading_evidence()') is not null,'meter evidence validation trigger function exists');
+select ok(to_regprocedure('public.validate_meter_reading_monotonicity()') is not null,'meter monotonicity validation trigger function exists');
 select * from finish();
 rollback;
