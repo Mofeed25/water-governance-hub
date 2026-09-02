@@ -34,19 +34,19 @@ export function AdminUsers({ tenants }: { tenants: { id: string; name: string }[
     setUsers((data ?? []) as unknown as AppUser[]);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const assign = async (u: AppUser, tenantId: string | null, role: MizanRole | null) => {
     setBusy(u.id);
     const { error } = await supabase.rpc("admin_set_user_access", {
       _user_id: u.id,
-      _tenant_id: tenantId as string,
-      _role: (role ?? undefined) as MizanRole,
+      _tenant_id: tenantId,
+      _role: role,
     });
     setBusy(null);
     if (error) { toast.error(error.message); return; }
-    toast.success("تم تحديث صلاحيات المستخدم");
-    load();
+    toast.success(role ? "تم تحديث صلاحيات المستخدم" : "تم تحديث المشروع");
+    void load();
   };
 
   const revoke = async (u: AppUser, role: string) => {
@@ -54,7 +54,8 @@ export function AdminUsers({ tenants }: { tenants: { id: string; name: string }[
     const { error } = await supabase.rpc("admin_revoke_role", { _user_id: u.id, _role: role as MizanRole });
     setBusy(null);
     if (error) { toast.error(error.message); return; }
-    load();
+    toast.success("تم سحب الدور");
+    void load();
   };
 
   return (
@@ -88,7 +89,7 @@ export function AdminUsers({ tenants }: { tenants: { id: string; name: string }[
                   <select
                     disabled={busy === u.id}
                     value={u.tenant_id ?? ""}
-                    onChange={(e) => assign(u, e.target.value || null, null)}
+                    onChange={(e) => void assign(u, e.target.value || null, null)}
                     className="rounded-lg border border-border bg-card px-2 py-1 text-xs"
                   >
                     <option value="">بدون مشروع</option>
@@ -101,7 +102,7 @@ export function AdminUsers({ tenants }: { tenants: { id: string; name: string }[
                     {u.roles.map((r) => (
                       <span key={r} className="inline-flex items-center gap-1 rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700">
                         {ROLE_LABEL[r as MizanRole] ?? r}
-                        <button onClick={() => revoke(u, r)} className="text-brand-700/60 hover:text-rose-600">
+                        <button onClick={() => void revoke(u, r)} className="text-brand-700/60 hover:text-rose-600" aria-label={`سحب دور ${ROLE_LABEL[r as MizanRole] ?? r}`}>
                           <X className="h-3 w-3" />
                         </button>
                       </span>
@@ -110,15 +111,13 @@ export function AdminUsers({ tenants }: { tenants: { id: string; name: string }[
                 </td>
                 <td className="p-3 text-center">
                   <select
-                    disabled={busy === u.id}
+                    disabled={busy === u.id || !u.tenant_id}
                     value=""
-                    onChange={(e) => e.target.value && assign(u, u.tenant_id, e.target.value as MizanRole)}
+                    onChange={(e) => e.target.value && void assign(u, u.tenant_id, e.target.value as MizanRole)}
                     className="rounded-lg border border-border bg-card px-2 py-1 text-xs"
                   >
                     <option value="">إضافة دور…</option>
-                    {(Object.keys(ROLE_LABEL) as MizanRole[]).map((r) => (
-                      <option key={r} value={r}>{ROLE_LABEL[r]}</option>
-                    ))}
+                    {(Object.keys(ROLE_LABEL) as MizanRole[]).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                   </select>
                 </td>
               </tr>

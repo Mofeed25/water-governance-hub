@@ -1,202 +1,34 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Camera, MapPin, Lock, Loader2, Droplets } from "lucide-react";
+import { Camera, MapPin, Loader2, Droplets, Search, Image as ImageIcon, ScanLine, ShieldCheck, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuthSession, useMizanRoles } from "@/hooks/use-auth";
+import { cacheTenant, getTenantCache, queueWrite, installSync, writeOnline } from "@/lib/offline-sync-v2";
+import { OfflineStatus } from "@/components/OfflineStatus";
 import { fmtDate } from "@/lib/format";
+import { recognizeMeterImage, warmMeterOcr, type MeterOcrResult } from "@/lib/meter-ocr";
+import { acceptOcrReading, exactMeterIdentityMatch } from "@/lib/meter-reading-evidence";
 
-export const Route = createFileRoute("/_authenticated/reader")({
-  head: () => ({ meta: [{ title: "قارئ العدادات — ميزان" }] }),
-  component: ReaderPage,
-});
-
+export const Route = createFileRoute("/_authenticated/reader")({ head: () => ({ meta: [{ title: "قارئ العدادات — منصة ميزان الذكية" }] }), component: ReaderPage });
 interface Subscriber { id: string; name: string; zone: string | null; meter_serial: string; tenant_id: string; }
-interface ReadingRow {
-  id: string; reading_m3: number; previous_m3: number | null; captured_at: string;
-  gps_lat: number | null; gps_lng: number | null; subscriber_id: string;
-  subscribers?: { name: string; meter_serial: string } | null;
-}
-
+interface ReadingRow { id: string; reading_m3: number; captured_at: string; gps_lat: number | null; gps_lng: number | null; subscriber_id: string; photo_url?: string | null; subscribers?: { name: string; meter_serial: string } | null; }
+function isNetworkError(error: unknown) { const message = error instanceof Error ? error.message : String(error); return /failed to fetch|network|offline|timeout|load failed|fetch/i.test(message); }
 function ReaderPage() {
-  const { user } = useAuthSession();
-  const { roles, profile, loading: rolesLoading } = useMizanRoles(user?.id);
-  const canSubmit = roles.includes("meter_reader") || roles.includes("project_manager");
-
-  const [subs, setSubs] = useState<Subscriber[]>([]);
-  const [rows, setRows] = useState<ReadingRow[]>([]);
-  const [subId, setSubId] = useState("");
-  const [reading, setReading] = useState("");
-  const [previous, setPrevious] = useState("");
-  const [gps, setGps] = useState<{ lat: number; lng: number } | null>(null);
-  const [gpsBusy, setGpsBusy] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const loadSubs = async () => {
-    const { data } = await supabase.from("subscribers").select("id,name,zone,meter_serial,tenant_id").order("meter_serial");
-    setSubs(data ?? []);
-  };
-  const loadRows = async () => {
-    const { data } = await supabase
-      .from("meter_readings")
-      .select("id,reading_m3,previous_m3,captured_at,gps_lat,gps_lng,subscriber_id,subscribers(name,meter_serial)")
-      .order("captured_at", { ascending: false })
-      .limit(20);
-    setRows((data ?? []) as ReadingRow[]);
-  };
-
-  useEffect(() => {
-    loadSubs(); loadRows();
-    const ch = supabase.channel("reader-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "meter_readings" }, loadRows)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, []);
-
-  const captureGps = () => {
-    if (!navigator.geolocation) { toast.error("GPS غير مدعوم على هذا الجهاز"); return; }
-    setGpsBusy(true);
-    navigator.geolocation.getCurrentPosition(
-      (p) => { setGps({ lat: p.coords.latitude, lng: p.coords.longitude }); setGpsBusy(false); toast.success("تم تسجيل الإحداثيات"); },
-      (e) => { setGpsBusy(false); toast.error(e.message || "تعذّر قراءة الموقع"); },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!subId || !reading) { toast.error("يرجى تعبئة الحقول"); return; }
-    const tenantId = subs.find((s) => s.id === subId)?.tenant_id ?? profile?.tenant_id ?? null;
-    if (!user || !tenantId) { toast.error("الحساب غير مرتبط بمشروع"); return; }
-    setBusy(true);
-    try {
-      const payload: any = {
-        tenant_id: tenantId,
-        subscriber_id: subId,
-        reader_id: user.id,
-        reading_m3: parseFloat(reading),
-        previous_m3: previous ? parseFloat(previous) : null,
-        gps_lat: gps?.lat ?? null,
-        gps_lng: gps?.lng ?? null,
-        captured_at: new Date().toISOString(),
-      };
-      // Cryptographic signature (immutable proof)
-      const canon = `${payload.tenant_id}|${payload.subscriber_id}|${payload.reader_id}|${payload.reading_m3}|${payload.captured_at}`;
-      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canon));
-      payload.hash_signature = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-
-      const { error } = await supabase.from("meter_readings").insert(payload);
-      if (error) throw error;
-      toast.success("تم إرسال القراءة — مغلقة تشفيريًا");
-      setReading(""); setPrevious(""); setSubId(""); setGps(null);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "فشل الإرسال");
-    } finally { setBusy(false); }
-  };
-
-  const selected = useMemo(() => subs.find(s => s.id === subId), [subs, subId]);
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-extrabold">قارئ العدادات</h1>
-        <p className="mt-1 text-sm text-muted-foreground">التقاط القراءات مع إحداثيات GPS وتوقيع تشفيري غير قابل للتعديل.</p>
-      </div>
-
-      {!rolesLoading && !canSubmit && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-          صلاحيات القراءة غير مفعّلة لحسابك — يمكنك عرض السجل فقط.
-        </div>
-      )}
-
-      <div className="grid gap-6 lg:grid-cols-5">
-        <form onSubmit={submit} className="glass rounded-2xl p-5 lg:col-span-2 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-bold">
-            <Droplets className="h-4 w-4 text-brand-600" /> قراءة جديدة
-          </div>
-
-          <Field label="المشترك">
-            <select required value={subId} onChange={e => setSubId(e.target.value)} disabled={!canSubmit || busy}
-              className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring">
-              <option value="">— اختر المشترك —</option>
-              {subs.map(s => <option key={s.id} value={s.id}>{s.meter_serial} · {s.name} {s.zone ? `· ${s.zone}` : ""}</option>)}
-            </select>
-          </Field>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="القراءة الحالية (م³)">
-              <input required type="number" step="0.01" min="0" value={reading} onChange={e => setReading(e.target.value)} disabled={!canSubmit || busy} dir="ltr"
-                className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
-            </Field>
-            <Field label="القراءة السابقة (اختياري)">
-              <input type="number" step="0.01" min="0" value={previous} onChange={e => setPrevious(e.target.value)} disabled={!canSubmit || busy} dir="ltr"
-                className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
-            </Field>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={captureGps} disabled={gpsBusy || !canSubmit}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-muted disabled:opacity-50">
-              {gpsBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
-              التقاط GPS
-            </button>
-            {gps && <span className="text-[11px] text-emerald-700 num">{gps.lat.toFixed(5)}, {gps.lng.toFixed(5)}</span>}
-          </div>
-
-          {selected && (
-            <div className="rounded-xl bg-muted/50 p-3 text-xs">
-              <div className="font-semibold">{selected.name}</div>
-              <div className="text-muted-foreground">عدّاد: {selected.meter_serial}</div>
-            </div>
-          )}
-
-          <button type="submit" disabled={!canSubmit || busy}
-            className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl brand-gradient px-4 py-3 text-sm font-bold text-white shadow-md hover:opacity-95 disabled:opacity-60">
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-            إرسال وقفل تشفيري
-          </button>
-          <p className="text-[10px] text-muted-foreground">
-            <Camera className="inline h-3 w-3" /> رفع الصور سيُفعَّل في المرحلة التالية عبر التخزين السحابي.
-          </p>
-        </form>
-
-        <div className="glass rounded-2xl p-5 lg:col-span-3">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="text-sm font-bold">أحدث القراءات (مباشر)</div>
-            <span className="text-[10px] text-emerald-700">● WebSocket</span>
-          </div>
-          <div className="max-h-[420px] overflow-auto">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-card">
-                <tr className="text-right text-muted-foreground">
-                  <th className="py-2">العدّاد</th><th>المشترك</th><th>القراءة</th><th>GPS</th><th>الوقت</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-muted-foreground">لا توجد قراءات بعد</td></tr>}
-                {rows.map(r => (
-                  <tr key={r.id} className="border-t border-border/60">
-                    <td className="py-2 font-semibold num">{r.subscribers?.meter_serial ?? "—"}</td>
-                    <td>{r.subscribers?.name ?? "—"}</td>
-                    <td className="num">{r.reading_m3}</td>
-                    <td className="num text-[10px] text-muted-foreground">{r.gps_lat != null ? `${r.gps_lat.toFixed(3)},${r.gps_lng?.toFixed(3)}` : "—"}</td>
-                    <td className="text-muted-foreground">{fmtDate(r.captured_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  const { user } = useAuthSession(); const { roles, profile, loading: rolesLoading } = useMizanRoles(user?.id); const canSubmit = roles.includes("meter_reader") || roles.includes("project_manager"); const tenantId = profile?.tenant_id ?? null;
+  const [subs,setSubs]=useState<Subscriber[]>([]); const [rows,setRows]=useState<ReadingRow[]>([]); const [query,setQuery]=useState(""); const [subId,setSubId]=useState(""); const [reading,setReading]=useState(""); const [gps,setGps]=useState<{lat:number;lng:number}|null>(null); const [photo,setPhoto]=useState<Blob|null>(null); const [photoPreview,setPhotoPreview]=useState<string|null>(null); const [busy,setBusy]=useState(false); const [gpsBusy,setGpsBusy]=useState(false); const [ocrBusy,setOcrBusy]=useState(false); const [ocr,setOcr]=useState<MeterOcrResult|null>(null); const [ocrError,setOcrError]=useState<string|null>(null);
+  const loadSubs=async()=>{if(!tenantId)return;const {data,error}=await supabase.from("subscribers").select("id,name,zone,meter_serial,tenant_id").order("meter_serial");if(!error){const value=(data??[]) as Subscriber[];setSubs(value);await cacheTenant("subscribers",tenantId,value);return;}const cached=await getTenantCache<Subscriber[]>("subscribers",tenantId);if(cached){setSubs(cached);toast.info("وضع عدم الاتصال: تم تحميل آخر نسخة محفوظة");}else toast.error("لا توجد نسخة محلية للمشتركين");};
+  const loadRows=async()=>{if(!tenantId)return;const {data,error}=await supabase.from("meter_readings").select("id,reading_m3,captured_at,gps_lat,gps_lng,subscriber_id,photo_url,subscribers(name,meter_serial)").order("captured_at",{ascending:false}).limit(30);if(!error){setRows((data??[]) as ReadingRow[]);await cacheTenant("readings",tenantId,data??[]);return;}const cached=await getTenantCache<ReadingRow[]>("readings",tenantId);if(cached)setRows(cached);};
+  useEffect(()=>{if(!tenantId)return;void loadSubs();void loadRows();const stop=installSync(tenantId,r=>{if(r.synced){toast.success(`تمت مزامنة ${r.synced} عملية`);void loadRows();}if(r.failed)toast.error(`تعذر مزامنة ${r.failed} عملية`);});const ch=supabase.channel(`reader-live-${tenantId}`).on("postgres_changes",{event:"INSERT",schema:"public",table:"meter_readings",filter:`tenant_id=eq.${tenantId}`},()=>void loadRows()).subscribe();return()=>{stop();void supabase.removeChannel(ch);};},[tenantId]);
+  useEffect(()=>{if(!canSubmit)return;void warmMeterOcr().catch(()=>undefined);},[canSubmit]);
+  useEffect(()=>{if(!photo||!selected)return;let cancelled=false;setOcr(null);setOcrError(null);setReading("");setOcrBusy(true);void recognizeMeterImage(photo,selected.meter_serial).then(result=>{if(cancelled)return;setOcr(result);if(result.meterSerialExtracted&&exactMeterIdentityMatch(result.meterSerialExtracted,selected.meter_serial)&&result.currentReading!==null&&acceptOcrReading(result.readingOcrConfidence)){setReading(String(result.currentReading));toast.success("تم التعرف على هوية العداد والقراءة الحالية");}else{setReading("");toast.error("لم تجتز الصورة التحقق الصارم؛ يرجى إعادة التصوير");}}).catch(error=>{if(cancelled)return;setOcrError(error instanceof Error?error.message:"تعذر تشغيل OCR");setOcr(null);setReading("");}).finally(()=>{if(!cancelled)setOcrBusy(false);});return()=>{cancelled=true;};},[photo,subId]);
+  useEffect(()=>()=>{if(photoPreview)URL.revokeObjectURL(photoPreview)},[photoPreview]);
+  const captureGps=()=>{if(!navigator.geolocation){toast.error("GPS غير مدعوم");return;}setGpsBusy(true);navigator.geolocation.getCurrentPosition(p=>{setGps({lat:p.coords.latitude,lng:p.coords.longitude});setGpsBusy(false);toast.success("تم تسجيل الموقع")},e=>{setGpsBusy(false);toast.error(e.message||"تعذر قراءة الموقع")},{enableHighAccuracy:true,timeout:10000,maximumAge:0});};
+  const capturePhoto=(file:File|null)=>{if(!file)return;if(!file.type.startsWith("image/")){toast.error("الملف يجب أن يكون صورة");return;}if(file.size>12*1024*1024){toast.error("حجم الصورة كبير؛ الحد 12MB");return;}if(photoPreview)URL.revokeObjectURL(photoPreview);setPhoto(file);setPhotoPreview(URL.createObjectURL(file));setOcr(null);setOcrError(null);setReading("");};
+  const submit=async(e:React.FormEvent)=>{e.preventDefault();if(!subId||!photo){toast.error("يرجى اختيار المشترك والتقاط صورة العداد");return;}if(!user||!tenantId){toast.error("الحساب غير مرتبط بمشروع");return;}const subscriber=subs.find(s=>s.id===subId);if(!subscriber||subscriber.tenant_id!==tenantId){toast.error("المشترك غير تابع لمشروعك");return;}if(!ocr||!ocr.meterSerialExtracted||!exactMeterIdentityMatch(ocr.meterSerialExtracted,subscriber.meter_serial)){toast.error("رفض: هوية العداد لم تطابق الرقم المسجل تطابقًا تامًا");return;}if(ocr.currentReading===null||!acceptOcrReading(ocr.readingOcrConfidence)){toast.error("رفض: ثقة قراءة العداد غير كافية؛ أعد التصوير");return;}const value=ocr.currentReading;const payload={client_operation_id:crypto.randomUUID(),tenant_id:tenantId,subscriber_id:subId,reader_id:user.id,reading_m3:value,meter_serial_extracted:ocr.meterSerialExtracted,meter_identity_match:true,meter_identity_confidence:ocr.meterIdentityConfidence,reading_ocr_confidence:ocr.readingOcrConfidence,ocr_processing_ms:ocr.ocrProcessingMs,identity_verified_at:new Date().toISOString(),gps_lat:gps?.lat??null,gps_lng:gps?.lng??null,captured_at:new Date().toISOString(),photo_blob:photo};setBusy(true);try{if(!navigator.onLine){await queueWrite("meter_readings",tenantId,payload);toast.success("حُفظت صورة العداد وبيانات التحقق على الهاتف للمزامنة التلقائية");}else{try{await writeOnline("meter_readings",tenantId,payload);toast.success("تم حفظ القراءة بعد التحقق الصارم خادميًا");void loadRows();}catch(err){if(!isNetworkError(err))throw err;await queueWrite("meter_readings",tenantId,payload);toast.warning("انقطع الاتصال؛ حُفظت العملية محليًا للمزامنة التلقائية");}}setReading("");setSubId("");setGps(null);setPhoto(null);setPhotoPreview(null);setOcr(null);}catch(err){toast.error(err instanceof Error?err.message:"فشل حفظ القراءة")}finally{setBusy(false)}};
+  const selected=useMemo(()=>subs.find(s=>s.id===subId),[subs,subId]); const visible=useMemo(()=>{const q=query.trim().toLowerCase();return q?subs.filter(s=>`${s.name} ${s.meter_serial} ${s.zone??""}`.toLowerCase().includes(q)):subs},[subs,query]);
+  const identityVerified=!!ocr&&!!selected&&!!ocr.meterSerialExtracted&&exactMeterIdentityMatch(ocr.meterSerialExtracted,selected.meter_serial);
+  const readingVerified=identityVerified&&ocr?.currentReading!==null&&acceptOcrReading(ocr?.readingOcrConfidence);
+  return <div className="space-y-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-extrabold">قراءة العدادات</h1><p className="mt-1 text-sm text-muted-foreground">تصوير → OCR → مطابقة هوية العداد → قراءة حالية غير قابلة للتعديل → حفظ ومزامنة.</p></div><OfflineStatus tenantId={tenantId}/></div>{!rolesLoading&&!canSubmit&&<div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">صلاحيات القراءة غير مفعّلة لحسابك.</div>}<div className="grid gap-6 lg:grid-cols-5"><form onSubmit={submit} className="glass rounded-2xl p-5 lg:col-span-2 space-y-3"><div className="flex items-center gap-2 text-sm font-bold"><Droplets className="h-4 w-4"/>قراءة جديدة</div><div className="relative"><Search className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-muted-foreground"/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="ابحث باسم المشترك أو رقم العداد" className="w-full rounded-xl border border-border bg-background py-2.5 pr-9 pl-3 text-sm"/></div><Field label="المشترك"><select required value={subId} onChange={e=>{setSubId(e.target.value);setPhoto(null);setPhotoPreview(null);setOcr(null);setReading("");}} disabled={!canSubmit||busy} className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"><option value="">— اختر المشترك —</option>{visible.map(s=><option key={s.id} value={s.id}>{s.meter_serial} · {s.name}{s.zone?` · ${s.zone}`:""}</option>)}</select></Field><Field label="القراءة الحالية (م³) — مستخرجة آليًا"><div className="relative"><input required type="number" min="0" step="0.01" value={reading} readOnly disabled={!canSubmit||busy||ocrBusy} dir="ltr" aria-readonly="true" className="w-full rounded-xl border border-border bg-muted/50 px-3 py-2.5 text-sm font-bold"/>{ocrBusy&&<Loader2 className="absolute left-3 top-2.5 h-5 w-5 animate-spin text-muted-foreground"/>}</div></Field><Field label="صورة العداد (مطلوبة)"><label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-brand-300 bg-brand-50/50 px-3 py-4 text-xs font-bold text-brand-700"><Camera className="h-4 w-4"/><span>{photo?"إعادة تصوير العداد":"التقاط صورة بالكاميرا"}</span><input type="file" accept="image/*" capture="environment" className="sr-only" onChange={e=>capturePhoto(e.target.files?.[0]??null)} disabled={!canSubmit||busy}/></label>{photoPreview&&<div className="mt-2 overflow-hidden rounded-xl border border-border"><img src={photoPreview} alt="معاينة صورة العداد" className="max-h-56 w-full object-contain"/><div className="flex items-center gap-1 p-2 text-[10px] text-muted-foreground"><ImageIcon className="h-3 w-3"/> الصورة تحفظ كدليل خاص بالمشروع.</div></div>}</Field>{selected&&<div className="rounded-xl bg-muted/50 p-3 text-xs"><b>{selected.name}</b><div className="text-muted-foreground">العداد المسجل: {selected.meter_serial}</div></div>}{photo&&<div className={`rounded-xl border p-3 text-xs ${identityVerified&&readingVerified?"border-emerald-200 bg-emerald-50 text-emerald-800":"border-amber-200 bg-amber-50 text-amber-800"}`}><div className="flex items-center gap-2 font-bold"><ScanLine className="h-4 w-4"/>نتيجة التحقق</div><div className="mt-2 space-y-1">{identityVerified?<div className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5"/> هوية العداد: مطابقة تامة</div>:<div className="flex items-center gap-1"><ShieldAlert className="h-3.5 w-3.5"/> هوية العداد: مرفوضة حتى يتم التعرف على الرقم بالكامل</div>}{ocr?.meterSerialExtracted&&<div dir="ltr">OCR ID: {ocr.meterSerialExtracted}</div>}{ocr?.currentReading!==null&&<div dir="ltr">OCR Reading: {ocr.currentReading}</div>}{ocr&&<div>ثقة القراءة: {Math.round(ocr.readingOcrConfidence*100)}% · زمن OCR: {ocr.ocrProcessingMs}ms</div>}{ocrError&&<div>{ocrError}</div>}</div></div>}<div className="rounded-xl bg-muted/50 p-3 text-xs"><b>القراءة السابقة والاستهلاك</b><div className="mt-1 text-muted-foreground">يحسبهما الخادم من سجل العداد؛ لا يتم حساب الاستهلاك على الهاتف.</div></div><div className="flex items-center gap-2"><button type="button" onClick={captureGps} disabled={gpsBusy||!canSubmit} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold">{gpsBusy?<Loader2 className="h-3.5 w-3.5 animate-spin"/>:<MapPin className="h-3.5 w-3.5"/>}التقاط GPS</button>{gps&&<span className="text-[11px] text-emerald-700 num">{gps.lat.toFixed(5)}, {gps.lng.toFixed(5)}</span>}</div><button type="submit" disabled={!canSubmit||busy||ocrBusy||!identityVerified||!readingVerified} className="flex w-full items-center justify-center gap-2 rounded-xl brand-gradient px-4 py-3 text-sm font-bold text-white disabled:opacity-60">{busy?<Loader2 className="h-4 w-4 animate-spin"/>:<Droplets className="h-4 w-4"/>}حفظ القراءة بعد التحقق</button></form><div className="glass rounded-2xl p-5 lg:col-span-3"><div className="mb-3 flex items-center justify-between"><b className="text-sm">أحدث القراءات</b><span className="text-[10px] text-muted-foreground">آخر 30</span></div><div className="max-h-[500px] overflow-auto"><table className="w-full text-xs"><thead className="sticky top-0 bg-card"><tr className="text-right text-muted-foreground"><th className="py-2">العداد</th><th>المشترك</th><th>القراءة</th><th>GPS</th><th>الدليل</th><th>الوقت</th></tr></thead><tbody>{rows.length===0&&<tr><td colSpan={6} className="py-6 text-center text-muted-foreground">لا توجد قراءات</td></tr>}{rows.map(r=><tr key={r.id} className="border-t border-border/60"><td className="py-2 font-semibold num">{r.subscribers?.meter_serial??"—"}</td><td>{r.subscribers?.name??"—"}</td><td className="num">{r.reading_m3}</td><td className="num text-[10px] text-muted-foreground">{r.gps_lat!=null?`${r.gps_lat.toFixed(3)},${r.gps_lng?.toFixed(3)}`:"—"}</td><td>{r.photo_url?<span className="inline-flex items-center gap-1 text-emerald-700"><ImageIcon className="h-3 w-3"/>已</span>:"—"}</td><td className="text-muted-foreground">{fmtDate(r.captured_at)}</td></tr>)}</tbody></table></div></div></div></div>;
 }
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">{label}</label>
-      {children}
-    </div>
-  );
-}
+function Field({label,children}:{label:string;children:React.ReactNode}){return <div><label className="mb-1.5 block text-xs font-semibold text-muted-foreground">{label}</label>{children}</div>}
